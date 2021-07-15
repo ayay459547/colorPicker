@@ -1,8 +1,18 @@
 <template>
   <div 
     class="color-picker"
-    @mouseup="dragUp();pointer1up();pointer2up();circleUp()" 
-    @mousemove="dragMove($event);pointer1move($event);pointer2move($event);circleMove($event)"
+    @mouseup="
+      dragUp($event);
+      pointer1up();
+      pointer2up();
+      circleUp();
+      degUp();" 
+    @mousemove="
+      dragMove($event);
+      pointer1move($event);
+      pointer2move($event);
+      circleMove($event)
+      degTurn($event)"
   >
     <div class="container">
       <h1>Color Picker</h1>
@@ -24,7 +34,7 @@
             :key="item.id"
             :ref="item.position"
             :class="{activeDrag: active == index}"
-            @mousedown.stop="dragDown(index)"
+            @mousedown.stop="dragDown($event, index)"
             :style="`transform: translateX(${dragWidth * item.position * 0.01}px);`"
           >
             <div class="drag-position">
@@ -52,11 +62,11 @@
           <!-- 中間 -->
           <div class="color-panel">
             <h3>color code</h3>
-            <input type="text" id="hex" v-model="colorList[active].hex">
-            <input type="text" id="r" v-model="colorList[active].rgba.red">
-            <input type="text" id="g" v-model="colorList[active].rgba.green">
-            <input type="text" id="b" v-model="colorList[active].rgba.blue">
-            <input type="text" id="a" v-model="colorList[active].rgba.alpha">
+            <input @keyup="hexToRgba" type="text" id="hex" v-model="colorList[active].hex">
+            <input @keyup="rgbaToHex" type="text" id="r" v-model.number="colorList[active].rgba.red">
+            <input @keyup="rgbaToHex" type="text" id="g" v-model.number="colorList[active].rgba.green">
+            <input @keyup="rgbaToHex" type="text" id="b" v-model.number="colorList[active].rgba.blue">
+            <input @keyup="rgbaToHex" type="text" id="a" v-model.number="colorList[active].rgba.alpha">
             <br/>
             <span>hex</span>
             <span>r</span>
@@ -78,10 +88,10 @@
                 @mousedown.stop="pointer2Down"
                 class="control-2" 
                 ref="control2"
-                :style="`background-color: ${colorList[active].hex}`"
+                :style="`background-color: ${rgbList[active]}`"
               ></div>
               <!-- style currentColor -->
-              <div class="bg" :style="`background-image: linear-gradient(90deg, ${colorList[active].hex} 20%, rgba(255,255,255,0) 100%);`"></div>
+              <div class="bg" :style="`background-image: linear-gradient(90deg, ${rgbList[active]} 20%, rgba(255,255,255,0) 100%);`"></div>
             </div>
           </div>
           <!-- 右邊 -->
@@ -94,7 +104,7 @@
                 :key="item.id"
               >
                 <div class="color-box" :style="`background: ${item.hex}`"></div>
-                <input type="text" v-model="colorList[index].hex">
+                <input type="text" @keyup="hexToRgba" v-model="colorList[index].hex">
                 <input type="text" v-model="colorList[index].position">
                 <img src="../assets/delete.png" alt="" width="30px"
                   @click.stop="del(index)">
@@ -108,13 +118,32 @@
             <button :class="{active: bgcProperty == 1}" @click="bgcProperty = 1">Radial</button>
           </div>
           <div class="set-deg">
-            <div class="deg-circle" :style="`transform: rotateZ(${deg}deg);`">
+            <div 
+              class="deg-circle" 
+              ref="deg-circle"
+              @mousedown="degDown"
+              :style="`transform: rotateZ(${deg}deg);`">
               <div class="dot"></div>
             </div>
             <input type="text" v-model="deg">
           </div>
           <div class="code">
-            
+            <h3 v-show="!bgcProperty">background: linear-gradient({{deg}}deg, {{showColor}})</h3>
+            <h3 v-show="bgcProperty">background: radial-gradient(circle, {{showColor}})</h3>
+            <button
+              v-show="!bgcProperty" 
+              @click="copy('copy1')"
+              class="copy" 
+              ref="copy1"
+              :data-clipboard-text="`background: linear-gradient(${deg}deg, ${showColor})`"
+            ></button>
+            <button
+              v-show="bgcProperty" 
+              @click="copy('copy2')"
+              class="copy" 
+              ref="copy2"
+              :data-clipboard-text="`background: radial-gradient(circle, ${showColor})`"
+            ></button>
           </div>
         </div>
       </div>
@@ -123,6 +152,8 @@
 </template>
 
 <script>
+import Clipboard from 'clipboard';
+
 export default {
   data() {
     return {
@@ -168,6 +199,11 @@ export default {
       //拖拉區
       dragWidth: null,
       dragCanMove: false,
+      //算速度
+      startTime: null,
+      endTime: null,
+      startX: null,
+      endX: null,
       //圓圈區
       paletteWidth: null,
       paletteHeight: null,
@@ -179,8 +215,13 @@ export default {
       pointer2CanMove: false,
       //bg-img角度
       deg: 90,
+      degCircleWidth: null,
+      circleCanTurn: false,
       //pointer六塊中哪一塊
-      area: 0
+      areaStateList: [],
+
+      //copy
+      clipboard: null
     }
   },
   computed: {
@@ -264,22 +305,45 @@ export default {
       }
     },
     //上半部拖拉控制
-    dragDown(index) {
+    dragDown(e, index) {
       this.dragCanMove = true
       this.changeActive(index)
+
+      //算速度
+      this.startTime = Date.now()
+      let pos = this.nowPosition(e)
+      this.startX = pos
     },
-    dragUp() {
+    dragUp(e) {
       this.dragCanMove = false
       this.listSort()
+
+      //算速度
+      this.endTime = Date.now()
+      let pos = this.nowPosition(e)
+      this.endX = pos
+
+      let x = this.endX - this.startX
+      let t = this.endTime - this.startTime
+      // console.log(x)
+      // console.log(t)
+      console.log("速度 => ",Math.floor(x*400/t))
+      //滑動功能保留
+      // setTime
+      // this.colorList[this.active].position += Math.floor(x*400/t)
     },
     dragMove(e) {
       if(this.dragCanMove) {
-        let pos = e.clientX - this.$refs['drag-list'].offsetLeft
-        pos = Math.floor(pos * 100 / this.dragWidth)
-        pos = pos <= 0 ? 0 : pos
-        pos = pos >= 100 ? 100 : pos
+        let pos = this.nowPosition(e)
         this.colorList[this.active].position = pos
       }
+    },
+    nowPosition(e) {
+      let pos = e.clientX - this.$refs['drag-list'].offsetLeft
+      pos = Math.floor(pos * 100 / this.dragWidth)
+      pos = pos <= 0 ? 0 : pos
+      pos = pos >= 100 ? 100 : pos
+      return pos
     },
     //圓圈拖拉控制
     circleDown() {
@@ -358,6 +422,7 @@ export default {
           this.colorList[this.active].rgba.green = 0
           this.colorList[this.active].rgba.blue = 255 - Math.floor((newpos - area * 5)/area * 255)
         }
+        this.rgbaToHex()
       }
     },
     pointer2move(e) {
@@ -373,6 +438,27 @@ export default {
       }
     },
 
+    //角度控制
+    degUp() {
+      this.circleCanTurn = false
+    },
+    degDown() {
+      this.circleCanTurn = true
+    },
+    degTurn(e) {
+      if(this.circleCanTurn) {
+        //取圓心
+        let centerX = this.$refs['deg-circle'].offsetLeft + this.degCircleWidth/2
+        let centerY = this.$refs['deg-circle'].offsetTop + this.degCircleWidth/2
+        let x = e.clientX - centerX
+        //因為滑鼠往上 y 會遞減 所以相反
+        let y = centerY - e.clientY
+        let angle = Math.atan2(x, y) / Math.PI * 180
+        angle = angle < 0 ? angle + 360 : angle
+        this.deg = Math.floor(angle)
+      }
+    },
+
 
     listSort() {
       this.colorList.sort((a, b) => {
@@ -384,27 +470,67 @@ export default {
       this.active = index
     },
 
-    hexToRgba(hex, opacity) {
-      let RGBA = "rgba(" + parseInt("0x" + hex.slice(1, 3)) + "," + parseInt("0x" + hex.slice(3, 5)) + "," + parseInt( "0x" + hex.slice(5, 7)) + "," + opacity + ")";
-      return {
+    hexToRgba(e, hex = this.colorList[this.active].hex, opacity = this.colorList[this.active].rgba.alpha) {
+      // let RGBA = "rgba(" + parseInt("0x" + hex.slice(1, 3)) + "," + parseInt("0x" + hex.slice(3, 5)) + "," + parseInt( "0x" + hex.slice(5, 7)) + "," + opacity + ")";
+      this.colorList[this.active].rgba = {
         red: parseInt("0x" + hex.slice(1, 3)),
         green: parseInt("0x" + hex.slice(3, 5)),
         blue: parseInt("0x" + hex.slice(5, 7)),
-        rgba: RGBA
+        alpha: opacity,
       }
+    },
+    rgbaToHex(e, r = this.colorList[this.active].rgba.red, g = this.colorList[this.active].rgba.green, b = this.colorList[this.active].rgba.blue) {
+      this.colorList[this.active].hex = `#${this.toHex(r)}${this.toHex(g)}${this.toHex(b)}`
+    },
+    toHex(color) {
+      let hex = parseInt(color).toString(16)
+      return hex.length == 1 ? `0${hex}` : hex
+    },
+
+    copy(btn) {
+      console.log(btn)
+      // this.desrtoy()
+      this.clipboard = new Clipboard(this.$refs[btn]);
+      this.clipboard.on('success', () => {
+        // console.log('copy success')
+        // this.clipboard = new Clipboard(this.$refs['copy'])
+      })
+      this.clipboard.on('error', () => {
+        console.log('copy error')
+      })
     }
   },
   mounted() {
     this.dragWidth = this.$refs['drag-list'].clientWidth
+    //方形調色盤
     this.paletteWidth = this.$refs['palette'].clientWidth
     this.paletteHeight = this.$refs['palette'].clientHeight
+    //拖拉調色
     this.pointer1Width = this.$refs['pointer1'].clientWidth
     this.pointer2Width = this.$refs['pointer2'].clientWidth
+    //角度圓圈
+    this.degCircleWidth = this.$refs['deg-circle'].clientWidth
   }
 }
 </script>
 
 <style lang="scss" scoped>
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  border-radius: 5px;
+  box-shadow: inset 0 0 10px rgba(0,0,0,0.25);
+}
+::-webkit-scrollbar-thumb {
+  border-radius: 5px;
+  background-color: #1F2667;
+
+  &:hover {
+    background-color: #384088;
+  }
+}
+
 .color-picker { 
   width: 100%;
   height: 100vh;
@@ -493,7 +619,6 @@ export default {
             margin: 0 auto;
             border-radius: 5px;
             border: 2px solid black;
-            transition: all 0.3s;
           }
 
           &:hover {
@@ -625,8 +750,11 @@ export default {
           //右邊區
           .console {
             width: 100%;
+            height: 200px;
             list-style: none;
-
+            overflow-y: scroll;
+            overflow-y: overlay;
+            
             li {
               width: 100%;
               // border: 2px solid black;
@@ -719,11 +847,30 @@ export default {
           }
         }
         .code {
-          flex: 3;
-          border: 2px solid black;
-          margin: 10px 10;
-          border-radius: 15px;
-          background: rgb(131, 131, 131);
+          padding: 40px 10px;
+          margin-right: 10px;
+          position: relative;
+          font-family: monospace, serif;
+          font-size: 15px;
+          flex: 4;
+          text-align: left;
+          border-radius: 5px;
+          background: #1f2667;
+          color: #cbcbd4;
+
+          .copy {
+            width: 30px;
+            height: 30px;
+            right: 5px;
+            top: 5px;
+            position: absolute;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #1f2667;
+            background-image: url('../assets/copy.svg');
+            background-size: cover;
+          }
         }
       }
     }
